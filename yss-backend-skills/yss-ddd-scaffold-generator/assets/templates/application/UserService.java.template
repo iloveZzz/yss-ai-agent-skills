@@ -1,0 +1,20 @@
+package {{base_package}}.core.service;
+
+import com.yss.cloud.dto.result.PageResult;
+import {{base_package}}.client.dto.cmd.UserAddCmd;
+import {{base_package}}.client.dto.cmd.UserUpdateCmd;
+import {{base_package}}.client.dto.query.UserPageQuery;
+import {{base_package}}.client.vo.UserVO;
+
+public interface UserService {
+
+    PageResult<UserVO> pageUser(UserPageQuery query);
+
+    UserVO getUserById(Long id);
+
+    Long addUser(UserAddCmd cmd);
+
+    void updateUser(UserUpdateCmd cmd);
+
+    void deleteUser(Long id);
+}
