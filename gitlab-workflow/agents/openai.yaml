@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitLab 操作"
+  short_description: "列项目、获取地址、克隆与推送"
+  default_prompt: "使用我的 GitLab 配置列出项目、获取仓库地址、克隆到本地并按分支工作流安全推送代码。"
