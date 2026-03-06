@@ -46,9 +46,59 @@ python3 scripts/gitlab_ops.py <subcommand> [options]
 - `create-group`：创建 group（支持 parent_id 创建子组）。
 - `create-project`：创建 project（支持 namespace_id 指定组/用户空间）。
 - `clone`：按项目 ID 或路径克隆仓库。
-- `push`：在本地仓库执行 add/commit/push。
-- `workflow`：一键执行 fetch/rebase/切分支/commit/push。
+- `push`：在本地仓库执行 add/commit/push（强制遵循 Conventional Commits 规范）。
+- `workflow`：一键执行 fetch/rebase/切分支/commit/push（强制遵循 Conventional Commits 规范）。
 - `init-config`：输出示例配置 JSON。
+
+## 提交消息规范（Conventional Commits）
+
+本技能强制遵循 Conventional Commits 规范，提交消息必须以以下类型开头：
+
+### 支持的提交类型
+- `feat`：新功能
+- `fix`：修复 bug
+- `refactor`：重构代码（既不修复 bug 也不添加新功能）
+- `docs`：文档更新
+- `style`：代码格式调整（不影响代码运行的变更）
+- `perf`：性能优化
+- `test`：测试相关（添加或修改测试）
+- `chore`：构建/工具相关（更新构建配置、依赖等）
+- `build`：构建系统
+- `ci`：CI 配置
+- `revert`：回滚提交
+
+### 提交消息格式
+```
+type(scope): description
+```
+
+- `type`：提交类型（必填，从上述类型中选择）
+- `scope`：影响范围（可选，如 api、ui、db 等）
+- `description`：简短描述（必填，至少 3 个字符）
+
+### 示例
+```bash
+# 基本格式
+python3 scripts/gitlab_ops.py push --message "feat: add user authentication"
+
+# 带作用域
+python3 scripts/gitlab_ops.py push --message "fix(api): resolve authentication timeout issue"
+
+# 重构
+python3 scripts/gitlab_ops.py push --message "refactor: optimize database queries"
+
+# 文档更新
+python3 scripts/gitlab_ops.py push --message "docs: update README with new features"
+
+# 测试相关
+python3 scripts/gitlab_ops.py push --message "test: add unit tests for user module"
+```
+
+### 验证规则
+- 提交消息不能为空
+- 必须以支持的类型开头（feat:, fix:, refactor: 等）
+- 描述部分至少 3 个字符
+- 不符合规范的提交将被拒绝并显示错误提示
 
 ## 推荐流程
 1. 若需要新空间，先创建 group：`create-group`。

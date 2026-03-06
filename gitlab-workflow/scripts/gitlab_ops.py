@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import http.client
@@ -23,6 +24,27 @@ from typing import Any, Dict, Iterable, List, Optional
 
 DEFAULT_CONFIG = Path.home() / ".config" / "codex" / "gitlab.json"
 DEFAULT_NAMESPACE = "Data-Middleground-Develop-Area/product-code/datamiddle-backend"
+
+CONVENTIONAL_COMMIT_TYPES = [
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "chore",
+    "build",
+    "ci",
+    "revert",
+]
+
+CONVENTIONAL_COMMIT_PATTERN = re.compile(
+    r"^(?P<type>" + "|".join(CONVENTIONAL_COMMIT_TYPES) + r")"
+    r"(?:\((?P<scope>[^\)]+)\))?"
+    r":\s+(?P<description>.+)$",
+    re.IGNORECASE
+)
 
 
 @dataclass
@@ -234,6 +256,53 @@ def run_cmd(cmd: List[str], cwd: Optional[Path] = None, dry_run: bool = False) -
         fail(f"Command failed ({exc.returncode}): {printable}")
 
 
+def validate_commit_message(message: str) -> None:
+    """验证提交消息是否符合 Conventional Commits 规范。
+    
+    要求提交消息以以下类型开头：
+    - feat: 新功能
+    - fix: 修复 bug
+    - refactor: 重构代码
+    - docs: 文档更新
+    - style: 代码格式调整
+    - perf: 性能优化
+    - test: 测试相关
+    - chore: 构建/工具相关
+    - build: 构建系统
+    - ci: CI 配置
+    - revert: 回滚提交
+    
+    格式: type(scope): description
+    例如: feat(api): add user authentication
+    """
+    if not message or not message.strip():
+        fail("Commit message cannot be empty")
+    
+    match = CONVENTIONAL_COMMIT_PATTERN.match(message.strip())
+    if not match:
+        fail(
+            f"Invalid commit message format.\n"
+            f"Message must start with one of: {', '.join(CONVENTIONAL_COMMIT_TYPES)}\n"
+            f"Format: type(scope): description\n"
+            f"Examples:\n"
+            f"  feat: add new feature\n"
+            f"  fix(api): resolve authentication bug\n"
+            f"  refactor: optimize database queries\n"
+            f"  docs: update README"
+        )
+    
+    commit_type = match.group("type").lower()
+    description = match.group("description").strip()
+    
+    if not description:
+        fail("Commit description cannot be empty")
+    
+    if len(description) < 3:
+        fail("Commit description must be at least 3 characters long")
+    
+    print(f"✓ Valid commit message: {commit_type}: {description}")
+
+
 def cmd_init_config(_: argparse.Namespace) -> None:
     sample = {
         "url": "https://gitlab.example.com",
@@ -430,6 +499,7 @@ def cmd_push(args: argparse.Namespace) -> None:
             fail("Cannot detect current branch. Use --branch")
         branch = result.stdout.strip()
 
+    validate_commit_message(args.message)
     run_cmd(["git", "add", "-A"], cwd=repo, dry_run=args.dry_run)
     run_cmd(["git", "commit", "-m", args.message], cwd=repo, dry_run=args.dry_run)
 
@@ -455,6 +525,7 @@ def cmd_workflow(args: argparse.Namespace) -> None:
             run_cmd(["git", "pull", "--rebase", "origin", args.base_branch], cwd=repo, dry_run=args.dry_run)
 
     run_cmd(["git", "checkout", "-B", args.branch], cwd=repo, dry_run=args.dry_run)
+    validate_commit_message(args.message)
     run_cmd(["git", "add", "-A"], cwd=repo, dry_run=args.dry_run)
     run_cmd(["git", "commit", "-m", args.message], cwd=repo, dry_run=args.dry_run)
     run_cmd(["git", "push", "-u", "origin", args.branch], cwd=repo, dry_run=args.dry_run)
@@ -529,19 +600,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_cp.add_argument("--json", action="store_true", help="Output JSON")
     p_cp.set_defaults(func=cmd_create_project)
 
-    p_push = sub.add_parser("push", help="Add/commit/push from local git repo")
+    p_push = sub.add_parser("push", help="Add/commit/push from local git repo (enforces Conventional Commits)")
     p_push.add_argument("--repo", default=".", help="Local git repo path")
     p_push.add_argument("--branch", help="Target branch; default is current branch")
-    p_push.add_argument("--message", required=True, help="Commit message")
+    p_push.add_argument("--message", required=True, help="Commit message (must follow Conventional Commits: feat:, fix:, refactor:, etc.)")
     p_push.add_argument("--set-upstream", action="store_true", help="Use -u origin <branch>")
     p_push.add_argument("--dry-run", action="store_true", help="Show commands only")
     p_push.set_defaults(func=cmd_push)
 
-    p_wf = sub.add_parser("workflow", help="Run branch-based fetch/rebase/commit/push flow")
+    p_wf = sub.add_parser("workflow", help="Run branch-based fetch/rebase/commit/push flow (enforces Conventional Commits)")
     p_wf.add_argument("--repo", default=".", help="Local git repo path")
     p_wf.add_argument("--base-branch", default="main", help="Base branch to update before work")
     p_wf.add_argument("--branch", required=True, help="Feature branch to create/switch")
-    p_wf.add_argument("--message", required=True, help="Commit message")
+    p_wf.add_argument("--message", required=True, help="Commit message (must follow Conventional Commits: feat:, fix:, refactor:, etc.)")
     p_wf.add_argument("--rebase", action="store_true", help="Rebase base branch before branching")
     p_wf.add_argument("--dry-run", action="store_true", help="Show commands only")
     p_wf.set_defaults(func=cmd_workflow)
