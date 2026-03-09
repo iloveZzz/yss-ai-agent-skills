@@ -2,8 +2,11 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List
+
+import tempfile
 
 DEFAULT_AUDIT_COLUMNS = {"created_by", "created_date", "last_modified_by", "last_modified_date"}
 DEFAULT_LOGIC_DELETE_FIELDS = ["deleted", "is_deleted"]
@@ -143,11 +146,11 @@ def require_conn_args(args):
         raise SkillError("缺少连接参数: " + ", ".join(missing))
 
 
-def mysql_metadata(args):
+def mysql_metadata(args, db_type="mysql"):
     try:
         import pymysql
     except ImportError as e:
-        raise SkillError("mysql 需要安装 pymysql: pip install pymysql") from e
+        raise SkillError(f"{db_type} 需要安装 pymysql: pip install pymysql") from e
 
     conn = pymysql.connect(
         host=args.host,
@@ -215,26 +218,83 @@ def mysql_metadata(args):
                         }
                     )
 
+                cursor.execute(
+                    """
+                    SELECT
+                        INDEX_NAME AS index_name,
+                        COLUMN_NAME AS column_name,
+                        NON_UNIQUE = 0 AS is_unique,
+                        INDEX_NAME = 'PRIMARY' AS is_primary
+                    FROM information_schema.STATISTICS
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+                    ORDER BY INDEX_NAME, SEQ_IN_INDEX
+                    """,
+                    [args.database, table_name],
+                )
+                index_rows = cursor.fetchall()
+                indexes = {}
+                for idx_row in index_rows:
+                    idx_name = idx_row["index_name"]
+                    if idx_name not in indexes:
+                        indexes[idx_name] = {
+                            "name": idx_name,
+                            "columns": [],
+                            "unique": idx_row["is_unique"],
+                            "primary": idx_row["is_primary"]
+                        }
+                    indexes[idx_name]["columns"].append(idx_row["column_name"])
+
+                cursor.execute(
+                    """
+                    SELECT
+                        CONSTRAINT_NAME AS fk_name,
+                        COLUMN_NAME AS column_name,
+                        REFERENCED_TABLE_NAME AS referenced_table,
+                        REFERENCED_COLUMN_NAME AS referenced_column
+                    FROM information_schema.KEY_COLUMN_USAGE
+                    WHERE TABLE_SCHEMA = %s
+                        AND TABLE_NAME = %s
+                        AND REFERENCED_TABLE_NAME IS NOT NULL
+                    ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
+                    """,
+                    [args.database, table_name],
+                )
+                fk_rows = cursor.fetchall()
+                foreign_keys = {}
+                for fk_row in fk_rows:
+                    fk_name = fk_row["fk_name"]
+                    if fk_name not in foreign_keys:
+                        foreign_keys[fk_name] = {
+                            "name": fk_name,
+                            "columns": [],
+                            "referenced_table": fk_row["referenced_table"],
+                            "referenced_columns": []
+                        }
+                    foreign_keys[fk_name]["columns"].append(fk_row["column_name"])
+                    foreign_keys[fk_name]["referenced_columns"].append(fk_row["referenced_column"])
+
                 tables.append(
                     {
                         "table_name": table_name,
                         "table_comment": row.get("TABLE_COMMENT") or table_name,
                         "primary_keys": pks,
                         "columns": columns,
+                        "indexes": list(indexes.values()),
+                        "foreign_keys": list(foreign_keys.values()),
                     }
                 )
     finally:
         conn.close()
 
-    return {"db_type": "mysql", "database": args.database, "schema": args.database, "tables": tables}
+    return {"db_type": db_type, "database": args.database, "schema": args.database, "tables": tables}
 
 
-def postgres_metadata(args):
+def postgres_metadata(args, db_type="postgres"):
     try:
         import psycopg2
         import psycopg2.extras
     except ImportError as e:
-        raise SkillError("postgres 需要安装 psycopg2-binary: pip install psycopg2-binary") from e
+        raise SkillError(f"{db_type} 需要安装 psycopg2-binary: pip install psycopg2-binary") from e
 
     schema = args.schema or "public"
     conn = psycopg2.connect(
@@ -251,20 +311,32 @@ def postgres_metadata(args):
             if wanted:
                 cursor.execute(
                     """
-                    SELECT table_name
-                    FROM information_schema.tables
-                    WHERE table_schema=%s AND table_type='BASE TABLE' AND table_name = ANY(%s)
-                    ORDER BY table_name
+                    SELECT t.table_name, pgd.description AS table_comment
+                    FROM information_schema.tables t
+                    LEFT JOIN pg_catalog.pg_statio_all_tables st
+                           ON st.schemaname = t.table_schema
+                          AND st.relname = t.table_name
+                    LEFT JOIN pg_catalog.pg_description pgd
+                           ON pgd.objoid = st.relid
+                          AND pgd.objsubid = 0
+                    WHERE t.table_schema=%s AND t.table_type='BASE TABLE' AND t.table_name = ANY(%s)
+                    ORDER BY t.table_name
                     """,
                     [schema, wanted],
                 )
             else:
                 cursor.execute(
                     """
-                    SELECT table_name
-                    FROM information_schema.tables
-                    WHERE table_schema=%s AND table_type='BASE TABLE'
-                    ORDER BY table_name
+                    SELECT t.table_name, pgd.description AS table_comment
+                    FROM information_schema.tables t
+                    LEFT JOIN pg_catalog.pg_statio_all_tables st
+                           ON st.schemaname = t.table_schema
+                          AND st.relname = t.table_name
+                    LEFT JOIN pg_catalog.pg_description pgd
+                           ON pgd.objoid = st.relid
+                          AND pgd.objsubid = 0
+                    WHERE t.table_schema=%s AND t.table_type='BASE TABLE'
+                    ORDER BY t.table_name
                     """,
                     [schema],
                 )
@@ -272,6 +344,7 @@ def postgres_metadata(args):
 
             for row in table_rows:
                 table_name = row["table_name"]
+                table_comment = row.get("table_comment") or table_name
                 cursor.execute(
                     """
                     SELECT c.column_name,
@@ -310,6 +383,69 @@ def postgres_metadata(args):
                 pks = [x["column_name"] for x in pk_rows]
                 pk_set = set(pks)
 
+                cursor.execute(
+                    """
+                    SELECT 
+                        ic.relname AS index_name,
+                        a.attname AS column_name,
+                        idx.indisunique AS is_unique,
+                        idx.indisprimary AS is_primary
+                    FROM pg_index idx
+                    JOIN pg_class ic ON idx.indexrelid = ic.oid
+                    JOIN pg_class t ON idx.indrelid = t.oid
+                    JOIN pg_namespace n ON t.relnamespace = n.oid
+                    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(idx.indkey)
+                    WHERE n.nspname = %s AND t.relname = %s
+                    ORDER BY ic.relname, a.attnum
+                    """,
+                    [schema, table_name],
+                )
+                index_rows = cursor.fetchall()
+                indexes = {}
+                for idx_row in index_rows:
+                    idx_name = idx_row["index_name"]
+                    if idx_name not in indexes:
+                        indexes[idx_name] = {
+                            "name": idx_name,
+                            "columns": [],
+                            "unique": idx_row["is_unique"],
+                            "primary": idx_row["is_primary"]
+                        }
+                    indexes[idx_name]["columns"].append(idx_row["column_name"])
+
+                cursor.execute(
+                    """
+                    SELECT
+                        tc.constraint_name AS fk_name,
+                        kcu.column_name AS column_name,
+                        ccu.table_name AS referenced_table,
+                        ccu.column_name AS referenced_column
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                    JOIN information_schema.constraint_column_usage ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                    WHERE tc.table_schema = %s
+                        AND tc.table_name = %s
+                        AND tc.constraint_type = 'FOREIGN KEY'
+                    ORDER BY tc.constraint_name, kcu.ordinal_position
+                    """,
+                    [schema, table_name],
+                )
+                fk_rows = cursor.fetchall()
+                foreign_keys = {}
+                for fk_row in fk_rows:
+                    fk_name = fk_row["fk_name"]
+                    if fk_name not in foreign_keys:
+                        foreign_keys[fk_name] = {
+                            "name": fk_name,
+                            "columns": [],
+                            "referenced_table": fk_row["referenced_table"],
+                            "referenced_columns": []
+                        }
+                    foreign_keys[fk_name]["columns"].append(fk_row["column_name"])
+                    foreign_keys[fk_name]["referenced_columns"].append(fk_row["referenced_column"])
+
                 columns = []
                 for col in col_rows:
                     raw_type = col["data_type"]
@@ -329,15 +465,17 @@ def postgres_metadata(args):
                 tables.append(
                     {
                         "table_name": table_name,
-                        "table_comment": table_name,
+                        "table_comment": table_comment,
                         "primary_keys": pks,
                         "columns": columns,
+                        "indexes": list(indexes.values()),
+                        "foreign_keys": list(foreign_keys.values()),
                     }
                 )
     finally:
         conn.close()
 
-    return {"db_type": "postgres", "database": args.database, "schema": schema, "tables": tables}
+    return {"db_type": db_type, "database": args.database, "schema": schema, "tables": tables}
 
 
 def oracle_metadata(args):
@@ -369,85 +507,165 @@ def oracle_metadata(args):
         table_rows = cursor.fetchall()
 
         for row in table_rows:
-            table_name = row[0]
-            cursor.execute(
-                """
-                SELECT utc.column_name,
-                       utc.data_type,
-                       utc.data_precision,
-                       utc.data_scale,
-                       utc.nullable,
-                       ucc.comments
-                FROM user_tab_columns utc
-                LEFT JOIN user_col_comments ucc
-                  ON utc.table_name = ucc.table_name
-                 AND utc.column_name = ucc.column_name
-                WHERE utc.table_name = :table_name
-                ORDER BY utc.column_id
-                """,
-                {"table_name": table_name},
-            )
-            col_rows = cursor.fetchall()
+                table_name = row[0]
+                cursor.execute(
+                    """
+                    SELECT utc.column_name,
+                           utc.data_type,
+                           utc.data_precision,
+                           utc.data_scale,
+                           utc.nullable,
+                           ucc.comments
+                    FROM user_tab_columns utc
+                    LEFT JOIN user_col_comments ucc
+                      ON utc.table_name = ucc.table_name
+                     AND utc.column_name = ucc.column_name
+                    WHERE utc.table_name = :table_name
+                    ORDER BY utc.column_id
+                    """,
+                    {"table_name": table_name},
+                )
+                col_rows = cursor.fetchall()
 
-            cursor.execute(
-                """
-                SELECT cols.column_name
-                FROM user_constraints cons
-                JOIN user_cons_columns cols
-                  ON cons.constraint_name = cols.constraint_name
-                WHERE cons.constraint_type='P' AND cons.table_name=:table_name
-                ORDER BY cols.position
-                """,
-                {"table_name": table_name},
-            )
-            pks = [x[0].lower() for x in cursor.fetchall()]
-            pk_set = set(pks)
+                cursor.execute(
+                    """
+                    SELECT cols.column_name
+                    FROM user_constraints cons
+                    JOIN user_cons_columns cols
+                      ON cons.constraint_name = cols.constraint_name
+                    WHERE cons.constraint_type='P' AND cons.table_name=:table_name
+                    ORDER BY cols.position
+                    """,
+                    {"table_name": table_name},
+                )
+                pks = [x[0].lower() for x in cursor.fetchall()]
+                pk_set = set(pks)
 
-            cursor.execute(
-                """
-                SELECT column_name
-                FROM user_tab_identity_cols
-                WHERE table_name = :table_name
-                """,
-                {"table_name": table_name},
-            )
-            identity_cols = {x[0].lower() for x in cursor.fetchall()}
+                cursor.execute(
+                    """
+                    SELECT column_name
+                    FROM user_tab_identity_cols
+                    WHERE table_name = :table_name
+                    """,
+                    {"table_name": table_name},
+                )
+                identity_cols = {x[0].lower() for x in cursor.fetchall()}
 
-            columns = []
-            for col in col_rows:
-                col_name = col[0].lower()
-                data_type = (col[1] or "").lower()
-                precision = col[2]
-                scale = col[3]
+                cursor.execute(
+                    """
+                    SELECT
+                        ui.index_name,
+                        uic.column_name,
+                        ui.uniqueness = 'UNIQUE' AS is_unique,
+                        ui.index_name IN (
+                            SELECT uc.constraint_name
+                            FROM user_constraints uc
+                            WHERE uc.table_name = :table_name AND uc.constraint_type = 'P'
+                        ) AS is_primary
+                    FROM user_indexes ui
+                    JOIN user_ind_columns uic
+                        ON ui.index_name = uic.index_name
+                    WHERE ui.table_name = :table_name
+                    ORDER BY ui.index_name, uic.column_position
+                    """,
+                    {"table_name": table_name},
+                )
+                index_rows = cursor.fetchall()
+                indexes = {}
+                for idx_row in index_rows:
+                    idx_name = idx_row[0].lower()
+                    if idx_name not in indexes:
+                        indexes[idx_name] = {
+                            "name": idx_name,
+                            "columns": [],
+                            "unique": idx_row[2],
+                            "primary": idx_row[3]
+                        }
+                    indexes[idx_name]["columns"].append(idx_row[1].lower())
 
-                sql_type = data_type
-                if data_type == "number":
-                    if scale and int(scale) > 0:
-                        sql_type = "numeric"
-                    elif precision and int(precision) <= 9:
-                        sql_type = "integer"
-                    else:
-                        sql_type = "bigint"
+                cursor.execute(
+                    """
+                    SELECT
+                        uc.constraint_name AS fk_name,
+                        ucc.column_name AS column_name,
+                        ruc.table_name AS referenced_table,
+                        rucc.column_name AS referenced_column
+                    FROM user_constraints uc
+                    JOIN user_cons_columns ucc
+                        ON uc.constraint_name = ucc.constraint_name
+                    JOIN user_constraints ruc
+                        ON uc.r_constraint_name = ruc.constraint_name
+                    JOIN user_cons_columns rucc
+                        ON ruc.constraint_name = rucc.constraint_name
+                        AND ucc.position = rucc.position
+                    WHERE uc.table_name = :table_name
+                        AND uc.constraint_type = 'R'
+                    ORDER BY uc.constraint_name, ucc.position
+                    """,
+                    {"table_name": table_name},
+                )
+                fk_rows = cursor.fetchall()
+                foreign_keys = {}
+                for fk_row in fk_rows:
+                    fk_name = fk_row[0].lower()
+                    if fk_name not in foreign_keys:
+                        foreign_keys[fk_name] = {
+                            "name": fk_name,
+                            "columns": [],
+                            "referenced_table": fk_row[2].lower(),
+                            "referenced_columns": []
+                        }
+                    foreign_keys[fk_name]["columns"].append(fk_row[1].lower())
+                    foreign_keys[fk_name]["referenced_columns"].append(fk_row[3].lower())
 
-                columns.append(
+                cursor.execute(
+                    """
+                    SELECT comments
+                    FROM user_tab_comments
+                    WHERE table_name = :table_name
+                    """,
+                    {"table_name": table_name},
+                )
+                table_comment_row = cursor.fetchone()
+                table_comment = (table_comment_row[0] or table_name.lower()) if table_comment_row else table_name.lower()
+
+                columns = []
+                for col in col_rows:
+                    col_name = col[0].lower()
+                    data_type = (col[1] or "").lower()
+                    precision = col[2]
+                    scale = col[3]
+
+                    sql_type = data_type
+                    if data_type == "number":
+                        if scale and int(scale) > 0:
+                            sql_type = "numeric"
+                        elif precision and int(precision) <= 9:
+                            sql_type = "integer"
+                        else:
+                            sql_type = "bigint"
+
+                    columns.append(
+                        {
+                            "name": col_name,
+                            "sql_type": sql_type,
+                            "nullable": col[4] == "Y",
+                            "primary": col_name in pk_set,
+                            "auto_increment": col_name in identity_cols,
+                            "comment": col[5] or "",
+                        }
+                    )
+
+                tables.append(
                     {
-                        "name": col_name,
-                        "sql_type": sql_type,
-                        "nullable": col[4] == "Y",
-                        "primary": col_name in pk_set,
-                        "auto_increment": col_name in identity_cols,
-                        "comment": col[5] or "",
+                        "table_name": table_name.lower(),
+                        "table_comment": table_comment,
+                        "primary_keys": pks,
+                        "columns": columns,
+                        "indexes": list(indexes.values()),
+                        "foreign_keys": list(foreign_keys.values()),
                     }
                 )
-
-            tables.append(
-                {
-                    "table_name": table_name.lower(),
-                    "table_comment": table_name.lower(),
-                    "primary_keys": pks,
-                    "columns": columns,
-                }
-            )
     finally:
         conn.close()
 
@@ -457,16 +675,40 @@ def oracle_metadata(args):
 def extract_metadata(args):
     args = merge_datasource_args(args)
     require_conn_args(args)
-    if args.db_type == "mysql":
-        metadata = mysql_metadata(args)
-    elif args.db_type == "postgres":
-        metadata = postgres_metadata(args)
-    elif args.db_type == "oracle":
-        metadata = oracle_metadata(args)
-    else:
-        raise SkillError(f"不支持的 db_type: {args.db_type}")
+    
+    try:
+        if args.db_type == "mysql":
+            metadata = mysql_metadata(args, db_type="mysql")
+        elif args.db_type == "postgres":
+            metadata = postgres_metadata(args, db_type="postgres")
+        elif args.db_type == "oracle":
+            metadata = oracle_metadata(args)
+        elif args.db_type == "opengauss":
+            metadata = postgres_metadata(args, db_type="opengauss")
+        elif args.db_type == "oceanbase":
+            metadata = mysql_metadata(args, db_type="oceanbase")
+        else:
+            raise SkillError(f"不支持的 db_type: {args.db_type}")
+    except Exception as e:
+        error_msg = f"数据库连接失败: {e}\n\n"
+        error_msg += "排查建议：\n"
+        error_msg += "  1. 检查数据库服务是否启动\n"
+        error_msg += "  2. 检查主机地址和端口是否正确\n"
+        error_msg += "  3. 检查用户名和密码是否正确\n"
+        error_msg += "  4. 检查数据库名是否正确\n"
+        if args.db_type == "postgres":
+            error_msg += "  5. 检查 schema 是否正确（PostgreSQL 默认为 public）\n"
+        error_msg += "  6. 检查网络连接是否正常\n"
+        raise SkillError(error_msg) from e
 
-    metadata["tables"] = apply_table_regex_filters(metadata.get("tables", []), args.include_tables_regex, args.exclude_tables_regex)
+    all_tables = metadata.get("tables", [])
+    filtered_tables = apply_table_regex_filters(all_tables, args.include_tables_regex, args.exclude_tables_regex)
+    
+    if not filtered_tables and all_tables:
+        available_tables = ", ".join([t["table_name"] for t in all_tables])
+        raise SkillError(f"没有匹配到表。可用表：{available_tables}")
+    
+    metadata["tables"] = filtered_tables
     return metadata
 
 
@@ -591,14 +833,21 @@ def normalize_scaffold_args(args):
 def build_paths(args, domain_name: str, domain_segment: str) -> Dict[str, Path]:
     domain_root = Path(args.domain_java_root)
     infra_root = Path(args.infra_java_root)
+    
+    base_path = Path(args.base_package.replace(".", "/"))
+    
+    if domain_segment:
+        domain_sub_path = base_path / "domain" / domain_segment
+    else:
+        domain_sub_path = base_path / "domain"
 
     return {
-        "domain_model": domain_root / Path(args.base_package.replace(".", "/")) / "domain" / domain_segment / "model" / f"{domain_name}.java",
-        "domain_gateway": domain_root / Path(args.base_package.replace(".", "/")) / "domain" / domain_segment / "gateway" / f"{domain_name}Gateway.java",
-        "po": infra_root / Path(args.base_package.replace(".", "/")) / "repository" / "entity" / f"{domain_name}PO.java",
-        "repo": infra_root / Path(args.base_package.replace(".", "/")) / "repository" / f"{domain_name}Repository.java",
-        "gateway_impl": infra_root / Path(args.base_package.replace(".", "/")) / "repository" / "gateway" / "impl" / f"{domain_name}GatewayImpl.java",
-        "convertor": infra_root / Path(args.base_package.replace(".", "/")) / "repository" / "convertor" / f"{domain_name}Convertor.java",
+        "domain_model": domain_root / domain_sub_path / "model" / f"{domain_name}.java",
+        "domain_gateway": domain_root / domain_sub_path / "gateway" / f"{domain_name}Gateway.java",
+        "po": infra_root / base_path / "repository" / "entity" / f"{domain_name}PO.java",
+        "repo": infra_root / base_path / "repository" / f"{domain_name}Repository.java",
+        "gateway_impl": infra_root / base_path / "repository" / "gateway" / "impl" / f"{domain_name}GatewayImpl.java",
+        "convertor": infra_root / base_path / "repository" / "convertor" / f"{domain_name}Convertor.java",
     }
 
 
@@ -615,6 +864,19 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
 
     domain_name = infer_domain_name(table["table_name"], args.table_prefix)
     domain_segment = args.domain_segment
+    
+    if domain_segment:
+        model_pkg = f"{args.base_package}.domain.{domain_segment}.model"
+        gateway_pkg = f"{args.base_package}.domain.{domain_segment}.gateway"
+    else:
+        model_pkg = f"{args.base_package}.domain.model"
+        gateway_pkg = f"{args.base_package}.domain.gateway"
+
+    method_add = f"add{domain_name}"
+    method_update = f"update{domain_name}"
+    method_delete = f"delete{domain_name}"
+    method_get = f"get{domain_name}ById"
+    method_page = f"page{domain_name}"
 
     po_fields_block, po_columns = build_fields(table.get("columns", []), mapping, skip_columns, for_po=True)
     domain_fields_block, domain_columns = build_fields(table.get("columns", []), mapping, skip_columns, for_po=False)
@@ -638,6 +900,7 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
     })
     domain_model_content = fill_template(template_text(args.domain_model_template), {
         "base_package": args.base_package,
+        "model_pkg": model_pkg,
         "domain_segment": domain_segment,
         "table_comment": table_comment,
         "domain_name": domain_name,
@@ -650,10 +913,17 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
     })
     domain_gateway_content = fill_template(template_text(args.domain_gateway_template), {
         "base_package": args.base_package,
+        "gateway_pkg": gateway_pkg,
+        "model_pkg": model_pkg,
         "domain_segment": domain_segment,
         "domain_name": domain_name,
         "pk_java_type": pk_java_type,
         "pk_field_name": pk_field_name,
+        "method_add": method_add,
+        "method_update": method_update,
+        "method_delete": method_delete,
+        "method_get": method_get,
+        "method_page": method_page,
     })
 
     logic_delete_condition = ""
@@ -677,6 +947,7 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         to_po_expr = f"{domain_name}Convertor.INSTANCE.toPO(entity)"
         convertor_content = fill_template(template_text(args.convertor_template), {
             "base_package": args.base_package,
+            "model_pkg": model_pkg,
             "domain_segment": domain_segment,
             "domain_name": domain_name,
         })
@@ -707,6 +978,8 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
 
     gw_impl_content = fill_template(template_text(args.gateway_impl_template), {
         "base_package": args.base_package,
+        "gateway_pkg": gateway_pkg,
+        "model_pkg": model_pkg,
         "domain_segment": domain_segment,
         "domain_name": domain_name,
         "repository_field_name": lower_first(domain_name) + "Repository",
@@ -718,6 +991,11 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         "convertor_import": convertor_import,
         "mapping_block": mapping_block,
         "to_po_expr": to_po_expr,
+        "method_add": method_add,
+        "method_update": method_update,
+        "method_delete": method_delete,
+        "method_get": method_get,
+        "method_page": method_page,
     })
 
     plan = [
@@ -740,7 +1018,7 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
 def validate_templates(args):
     expected = {
         args.po_template: ["${domain_name}", "${fields_block}", "${table_name}"],
-        args.domain_model_template: ["${domain_name}", "${domain_segment}"],
+        args.domain_model_template: ["${domain_name}"],
         args.repository_template: ["${domain_name}"],
         args.domain_gateway_template: ["${domain_name}", "${pk_java_type}"],
         args.gateway_impl_template: ["${domain_name}", "${repository_field_name}", "${mapping_block}"],
@@ -760,6 +1038,15 @@ def run_extract(args):
     print(f"tables: {len(metadata.get('tables', []))}")
 
 
+def print_progress_bar(current: int, total: int, prefix: str = ""):
+    bar_length = 40
+    progress = current / total
+    filled_length = int(bar_length * progress)
+    bar = "█" * filled_length + "░" * (bar_length - filled_length)
+    sys.stdout.write(f"\r{prefix}[{bar}] {current}/{total} ({int(progress * 100)}%)")
+    sys.stdout.flush()
+
+
 def run_scaffold(args):
     normalize_scaffold_args(args)
     validate_templates(args)
@@ -776,10 +1063,16 @@ def run_scaffold(args):
         raise SkillError("没有匹配到可生成的表")
 
     generated_files = []
-    for table in tables:
+    total = len(tables)
+    for i, table in enumerate(tables, 1):
+        if not args.verbose and total > 1:
+            print_progress_bar(i, total, prefix="生成进度: ")
         log(f"generate table: {table['table_name']}", args.verbose)
         generated_files.extend(generate_table(table, args, mapping))
-
+    
+    if not args.verbose and total > 1:
+        print()
+    
     for path in generated_files:
         prefix = "planned" if args.dry_run else "generated"
         print(f"{prefix}: {path}")
@@ -851,6 +1144,9 @@ def build_parser():
     parser = argparse.ArgumentParser(description="db metadata to yss mybatis scaffold")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    p_init = sub.add_parser("init", help="交互式配置向导")
+    p_init.add_argument("--skill-root", required=True, help="skill 根目录路径")
+
     p_extract = sub.add_parser("extract", help="提取数据库元数据")
     add_conn_args(p_extract)
     p_extract.add_argument("--output", required=True)
@@ -867,6 +1163,124 @@ def build_parser():
     return parser
 
 
+def prompt_input(prompt: str, default: str = None) -> str:
+    if default:
+        prompt = f"{prompt} [{default}]: "
+    else:
+        prompt = f"{prompt}: "
+    value = input(prompt).strip()
+    return value if value else (default or "")
+
+
+def prompt_choice(prompt: str, choices: list, default: str = None) -> str:
+    while True:
+        print(f"\n{prompt}")
+        for i, choice in enumerate(choices, 1):
+            if choice == default:
+                print(f"  {i}. {choice} (default)")
+            else:
+                print(f"  {i}. {choice}")
+        try:
+            choice = input(f"请选择 (1-{len(choices)}){f' [{default}]' if default else ''}: ").strip()
+            if not choice and default:
+                return default
+            idx = int(choice) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        except ValueError:
+            pass
+        print(f"请输入 1-{len(choices)} 之间的数字")
+
+
+def run_init(args):
+    print("=" * 60)
+    print("  yss-db2mybatis 配置向导")
+    print("=" * 60)
+    print("\n请按照提示输入配置信息\n")
+
+    db_type = prompt_choice("请选择数据库类型", ["mysql", "postgres", "oracle"], "postgres")
+
+    host = prompt_input("数据库主机地址", "localhost")
+
+    default_port = {"mysql": "3306", "postgres": "5432", "oracle": "1521"}[db_type]
+    port = prompt_input("数据库端口", default_port)
+
+    user = prompt_input("数据库用户名", "dmz")
+    password = prompt_input("数据库密码", "dmz")
+    database = prompt_input("数据库名", "yss_metadata")
+
+    schema = None
+    if db_type == "postgres":
+        schema = prompt_input("Schema 名称", "public")
+
+    datasource_name = prompt_input("数据源名称", "my-datasource")
+
+    base_package = prompt_input("基础包名", "com.yss.metadata")
+    domain_segment = prompt_input("领域分段名", "metadata")
+
+    print("\n" + "=" * 60)
+    print("  配置信息确认")
+    print("=" * 60)
+    print(f"  数据库类型: {db_type}")
+    print(f"  主机: {host}:{port}")
+    print(f"  用户名: {user}")
+    print(f"  数据库: {database}")
+    if schema:
+        print(f"  Schema: {schema}")
+    print(f"  基础包名: {base_package}")
+    print(f"  领域分段: {domain_segment}")
+    print("=" * 60)
+
+    confirm = prompt_input("\n确认生成配置文件? (y/n)", "y").lower()
+    if confirm not in ["y", "yes", ""]:
+        print("已取消")
+        return
+
+    datasource_config = {
+        "datasources": {
+            datasource_name: {
+                "db_type": db_type,
+                "host": host,
+                "port": int(port),
+                "user": user,
+                "password": password,
+                "database": database,
+            }
+        }
+    }
+    if schema:
+        datasource_config["datasources"][datasource_name]["schema"] = schema
+
+    config_dir = Path(tempfile.gettempdir()) / "yss-db2mybatis"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    datasource_file = config_dir / "datasource-config.json"
+    
+    metadata_file = config_dir / "metadata.json"
+
+    write_text(str(datasource_file), json.dumps(datasource_config, ensure_ascii=False, indent=2))
+    print(f"\n✅ 数据源配置文件已生成: {datasource_file}")
+
+    print("\n" + "=" * 60)
+    print("  下一步")
+    print("=" * 60)
+    print(f"1. 提取元数据:")
+    print(f"   python3 {args.skill_root}/scripts/db2mybatis.py extract \\")
+    print(f"     --datasource-config {datasource_file} \\")
+    print(f"     --datasource-name {datasource_name} \\")
+    print(f"     --include-tables-regex '.*' \\")
+    print(f"     --output {metadata_file}")
+    print(f"\n2. 生成代码:")
+    print(f"   python3 {args.skill_root}/scripts/db2mybatis.py scaffold \\")
+    print(f"     --skill-root {args.skill_root} \\")
+    print(f"     --metadata-file {metadata_file} \\")
+    print(f"     --base-package {base_package} \\")
+    print(f"     --domain-segment {domain_segment} \\")
+    print(f"     --domain-java-root ./domain \\")
+    print(f"     --infra-java-root ./infrastructure \\")
+    print(f"     --dry-run")
+    print("=" * 60)
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -875,6 +1289,8 @@ def main():
             run_extract(args)
         elif args.cmd == "scaffold":
             run_scaffold(args)
+        elif args.cmd == "init":
+            run_init(args)
         else:
             run_validate(args)
     except SkillError as e:

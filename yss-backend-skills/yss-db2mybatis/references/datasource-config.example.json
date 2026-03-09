@@ -24,6 +24,23 @@
       "user": "quality",
       "password": "quality",
       "database": "ORCLPDB1"
+    },
+    "quality-opengauss": {
+      "db_type": "opengauss",
+      "host": "127.0.0.1",
+      "port": 5432,
+      "user": "opengauss",
+      "password": "password",
+      "database": "yss_quality",
+      "schema": "public"
+    },
+    "quality-oceanbase": {
+      "db_type": "oceanbase",
+      "host": "127.0.0.1",
+      "port": 2881,
+      "user": "root@mysql",
+      "password": "root",
+      "database": "yss_quality"
     }
   }
 }

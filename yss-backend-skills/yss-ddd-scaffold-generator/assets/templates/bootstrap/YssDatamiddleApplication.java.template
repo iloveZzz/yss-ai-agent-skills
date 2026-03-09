@@ -11,13 +11,17 @@ import org.springframework.boot.SpringApplication;
 
 @EnableAsync
 @EnableDiscoveryClient
-@EnableYssCloudRedisCache
+// @EnableYssCloudRedisCache // 请在确认 Redis 配置后取消注释
 @EnableAspectJAutoProxy
-@EnableDistributedId
+// @EnableDistributedId // 请在确认分布式 ID 配置后取消注释
 @EnableExcelMvc
 @SpringBootApplication(scanBasePackages = {"com.yss.datamiddle", "com.yss.cloud"})
 public class YssDatamiddleApplication {
-
+    /**
+     * 应用程序入口方法，启动 Spring Boot 应用
+     *
+     * @param args 启动参数
+     */
     public static void main(String[] args) {
         SpringApplication.run(YssDatamiddleApplication.class, args);
     }

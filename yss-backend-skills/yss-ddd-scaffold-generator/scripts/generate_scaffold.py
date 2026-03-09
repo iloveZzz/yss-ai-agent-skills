@@ -82,7 +82,7 @@ class ScaffoldGenerator:
         print()
         print("🎯 下一步:")
         print(f"  cd {self.project_root}")
-        print("  ./mvnw clean compile")
+        print("  ./mvnw clean install")
         print("  ./mvnw spring-boot:run -pl {}-bootstrap".format(self.project_name))
         
     def _create_project_structure(self):
@@ -320,6 +320,12 @@ CREATE TABLE leaf_alloc (
             if source.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        mvn_dir_source = wrapper_dir / ".mvn"
+        mvn_dir_target = self.project_root / ".mvn"
+        if mvn_dir_source.exists():
+            if mvn_dir_target.exists():
+                shutil.rmtree(mvn_dir_target)
+            shutil.copytree(mvn_dir_source, mvn_dir_target)
 
     def _render_and_write_templates(self, items: List[tuple]):
         variables = self._template_vars()

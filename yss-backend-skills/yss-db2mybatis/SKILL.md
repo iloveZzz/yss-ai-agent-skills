@@ -1,6 +1,6 @@
 ---
 name: "yss-db2mybatis"
-description: "读取 MySQL/Oracle/PostgreSQL 元数据并生成 YSS MyBatis 代码：repository 操作逻辑、domain gateway 接口、infrastructure gateway 实现。"
+description: "读取 MySQL/Oracle/PostgreSQL/OpenGauss/OceanBase 元数据并生成 YSS MyBatis 代码：repository 操作逻辑、domain gateway 接口、infrastructure gateway 实现。"
 metadata:
   author: yss datamiddle team
   version: "1.1"
@@ -13,11 +13,13 @@ metadata:
 ## 1. 适用范围
 
 适用：
+
 - 已有数据库表，需批量生成 YSS 风格持久层。
 - 需要统一生成 `domain model + domain gateway + repository + gateway impl`。
 - 需要多数据源配置、按表名规则批量生成。
 
 不适用：
+
 - 复杂关联查询、手写 SQL 优化、复杂 XML Mapper。
 - 联合主键业务（默认 `pk_strategy=error`，需显式策略确认）。
 
@@ -34,6 +36,8 @@ metadata:
 - MySQL: `pip install pymysql`
 - PostgreSQL: `pip install psycopg2-binary`
 - Oracle: `pip install oracledb`
+- OpenGauss: `pip install psycopg2-binary`
+- OceanBase: `pip install pymysql`
 
 ## 4. 快速开始（最小可运行）
 
@@ -76,11 +80,32 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
   --output /tmp/metadata.json
 ```
 
+### 4.4 OpenGauss
+
+```bash
+python3 yss-db2mybatis/scripts/db2mybatis.py extract \
+  --datasource-config yss-db2mybatis/references/datasource-config.example.json \
+  --datasource-name quality-opengauss \
+  --tables t_quality_template \
+  --output /tmp/metadata.json
+```
+
+### 4.5 OceanBase
+
+```bash
+python3 yss-db2mybatis/scripts/db2mybatis.py extract \
+  --datasource-config yss-db2mybatis/references/datasource-config.example.json \
+  --datasource-name quality-oceanbase \
+  --tables t_quality_template \
+  --output /tmp/metadata.json
+```
+
 ## 5. 生成前后目录对照
 
 输入：数据库表 `t_quality_template`
 
 输出：
+
 - `domain/{segment}/model/QualityTemplate.java`
 - `domain/{segment}/gateway/QualityTemplateGateway.java`
 - `repository/entity/QualityTemplatePO.java`
@@ -102,6 +127,7 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
 参考：`references/project-convention.example.json`
 
 关键字段：
+
 - `audit_columns`：默认跳过字段
 - `logic_delete_fields`：分页时自动附加 `wrapper.eq(field, 0)`
 - `base_entity_class`：PO 继承父类
@@ -156,8 +182,17 @@ python3 yss-db2mybatis/scripts/db2mybatis.py validate \
 - `文件已存在`：默认防覆盖，确认后加 `--overwrite`。
 - `联合主键...pk_strategy=error`：改 `--pk-strategy first` 或手工处理。
 - `metadata 中没有表`：检查 `--tables`、include/exclude regex、schema 权限。
+- `PageQuery` 引用错误：默认使用 `com.yss.cloud.dto.page.PageQuery`，如需修改请调整 `gateway_impl.template.java`。
+- `Serializable` 泛型约束：生成的 Domain Model 已默认实现 `Serializable`。
+
 
 ## 10. Oracle 特殊说明
 
 - 已支持 `IDENTITY` 字段识别。
 - `SEQUENCE + TRIGGER` 自动关联不做强识别，建议生成后按项目规则手工调整主键策略。
+
+## 11. OceanBase 特殊说明
+
+- 默认支持 OceanBase MySQL 模式（兼容 MySQL 协议）。
+- 使用 `pymysql` 驱动连接。
+- 若需使用 Oracle 模式，请尝试使用 `oracle` 类型连接（需安装 `oracledb` 并配置相应连接串），或等待后续特定支持。

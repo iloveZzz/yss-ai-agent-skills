@@ -50,7 +50,7 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 | `--base-package` | 基础包名 | 是 | - |
 | `--output-dir` | 输出目录 | 否 | `./output` |
 | `--with-example` | 是否包含示例代码 | 否 | `true` |
-| `--database` | 数据库类型 | 否 | `mysql` |
+| `--database` | 数据库类型 | 否 | `sqlite` (若需MySQL请显式指定 `mysql`) |
 
 ### 2.3 生成的项目结构
 
@@ -97,6 +97,18 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
             ├── application.yml               # 应用配置
             └── logback-spring.xml            # 日志配置
 ```
+
+## 3. 常见问题 (FAQ)
+
+### 3.1 默认数据库依赖
+默认生成的项目使用 SQLite。如果需要 MySQL，请在生成时指定 `--database mysql`。
+如果已经生成了 SQLite 项目想要切换到 MySQL：
+1. 修改 `infrastructure/pom.xml`，移除 `sqlite-jdbc`，添加 `mysql-connector-j`。
+2. 修改 `bootstrap/src/main/resources/application.yml` 中的数据源配置。
+
+### 3.2 启动类注解
+生成的 `Application.java` 可能包含 `@EnableYssCloudRedisCache` 等注解。如果项目未配置 Redis，请注释掉该注解以免启动失败。
+
 
 ## 3. 示例代码 (Examples)
 

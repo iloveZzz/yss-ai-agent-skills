@@ -1,13 +1,16 @@
-package ${base_package}.domain.${domain_segment}.model;
+package ${model_pkg};
 
 import lombok.Data;
+import java.io.Serializable;
 ${extra_imports}
 
 /**
  * ${table_comment}
  */
 @Data
-public class ${domain_name} {
+public class ${domain_name} implements Serializable {
+
+    private static final long serialVersionUID = 1L;
 
 ${fields_block}
 }
