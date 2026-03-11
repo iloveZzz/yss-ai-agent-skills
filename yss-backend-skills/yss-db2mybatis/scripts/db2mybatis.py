@@ -104,6 +104,210 @@ def apply_table_regex_filters(tables: List[Dict], include_regex: str, exclude_re
     return filtered
 
 
+def unquote_identifier(value: str) -> str:
+    v = value.strip()
+    if (v.startswith("`") and v.endswith("`")) or (v.startswith('"') and v.endswith('"')):
+        v = v[1:-1]
+    if "." in v:
+        v = v.split(".")[-1]
+    return v
+
+
+def split_top_level(text: str, delimiter: str = ",") -> List[str]:
+    parts = []
+    buf = []
+    depth = 0
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote and (i == 0 or text[i - 1] != "\\"):
+                quote = ""
+        else:
+            if ch in ("'", '"', "`"):
+                quote = ch
+                buf.append(ch)
+            elif ch == "(":
+                depth += 1
+                buf.append(ch)
+            elif ch == ")":
+                depth = max(0, depth - 1)
+                buf.append(ch)
+            elif ch == delimiter and depth == 0:
+                part = "".join(buf).strip()
+                if part:
+                    parts.append(part)
+                buf = []
+            else:
+                buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def parse_sql_type(definition: str) -> str:
+    lower_def = definition.lower()
+    keywords = [
+        r"\bnot\s+null\b",
+        r"\bnull\b",
+        r"\bdefault\b",
+        r"\bcomment\b",
+        r"\bprimary\s+key\b",
+        r"\bauto_increment\b",
+        r"\bgenerated\b",
+        r"\bunique\b",
+        r"\breferences\b",
+        r"\bconstraint\b",
+        r"\bcheck\b",
+    ]
+    pos = len(definition)
+    for pattern in keywords:
+        m = re.search(pattern, lower_def, re.IGNORECASE)
+        if m:
+            pos = min(pos, m.start())
+    return definition[:pos].strip()
+
+
+def parse_ddl_table(ddl_stmt: str) -> Dict:
+    m = re.search(r"create\s+table\s+(?:if\s+not\s+exists\s+)?([`\".\w]+)", ddl_stmt, re.IGNORECASE)
+    if not m:
+        raise SkillError("DDL 解析失败：未识别 CREATE TABLE 语句")
+    table_name = unquote_identifier(m.group(1))
+
+    left = ddl_stmt.find("(", m.end())
+    if left < 0:
+        raise SkillError(f"DDL 解析失败：表 {table_name} 缺少字段定义")
+
+    depth = 1
+    quote = ""
+    right = -1
+    i = left + 1
+    while i < len(ddl_stmt):
+        ch = ddl_stmt[i]
+        if quote:
+            if ch == quote and ddl_stmt[i - 1] != "\\":
+                quote = ""
+        else:
+            if ch in ("'", '"', "`"):
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    right = i
+                    break
+        i += 1
+    if right < 0:
+        raise SkillError(f"DDL 解析失败：表 {table_name} 字段括号未闭合")
+
+    body = ddl_stmt[left + 1:right]
+    tail = ddl_stmt[right + 1:]
+    table_comment = ""
+    cm = re.search(r"comment\s*=\s*'([^']*)'", tail, re.IGNORECASE)
+    if cm:
+        table_comment = cm.group(1)
+
+    columns = []
+    primary_keys = []
+    for item in split_top_level(body):
+        s = item.strip().rstrip(",")
+        lower_s = s.lower()
+        if not s:
+            continue
+
+        if lower_s.startswith("primary key") or ("constraint" in lower_s and "primary key" in lower_s):
+            pm = re.search(r"\((.*?)\)", s, re.IGNORECASE | re.DOTALL)
+            if pm:
+                for c in split_top_level(pm.group(1)):
+                    primary_keys.append(unquote_identifier(c))
+            continue
+
+        if lower_s.startswith("key ") or lower_s.startswith("index ") or lower_s.startswith("unique key") \
+                or lower_s.startswith("unique index") or lower_s.startswith("constraint") \
+                or lower_s.startswith("foreign key"):
+            continue
+
+        cm = re.match(r"^\s*([`\".\w]+)\s+(.+)$", s, re.DOTALL)
+        if not cm:
+            continue
+        col_name = unquote_identifier(cm.group(1))
+        col_def = cm.group(2).strip()
+        sql_type = parse_sql_type(col_def)
+        lower_def = col_def.lower()
+        nullable = not bool(re.search(r"\bnot\s+null\b", lower_def))
+        primary_inline = bool(re.search(r"\bprimary\s+key\b", lower_def))
+        auto_increment = bool(re.search(r"\bauto_increment\b", lower_def) or re.search(r"\bidentity\b", lower_def))
+        comment = ""
+        comment_m = re.search(r"comment\s+'([^']*)'", col_def, re.IGNORECASE)
+        if comment_m:
+            comment = comment_m.group(1)
+
+        columns.append({
+            "name": col_name,
+            "sql_type": sql_type,
+            "nullable": nullable,
+            "primary": primary_inline,
+            "auto_increment": auto_increment,
+            "comment": comment,
+        })
+        if primary_inline and col_name not in primary_keys:
+            primary_keys.append(col_name)
+
+    pk_set = set(primary_keys)
+    for col in columns:
+        if col["name"] in pk_set:
+            col["primary"] = True
+            col["nullable"] = False
+
+    return {
+        "table_name": table_name,
+        "table_comment": table_comment or table_name,
+        "primary_keys": primary_keys,
+        "columns": columns,
+        "indexes": [],
+        "foreign_keys": [],
+    }
+
+
+def metadata_from_ddl(ddl_text: str, db_type: str = "mysql", database: str = "ddl", schema: str = None) -> Dict:
+    tables = []
+    pos = 0
+    pattern = re.compile(r"\bcreate\s+table\b", re.IGNORECASE)
+    while True:
+        m = pattern.search(ddl_text, pos)
+        if not m:
+            break
+        start = m.start()
+        next_m = pattern.search(ddl_text, m.end())
+        end = next_m.start() if next_m else len(ddl_text)
+        stmt = ddl_text[start:end].strip()
+        if stmt:
+            tables.append(parse_ddl_table(stmt))
+        pos = end
+
+    return {
+        "db_type": db_type,
+        "database": database,
+        "schema": schema or database,
+        "tables": tables,
+    }
+
+
+def read_ddl_input(args) -> str:
+    if args.ddl_file and args.ddl_sql:
+        raise SkillError("不能同时使用 --ddl-file 和 --ddl-sql")
+    if args.ddl_file:
+        return read_text(args.ddl_file)
+    if args.ddl_sql:
+        return args.ddl_sql
+    raise SkillError("请提供 --ddl-file 或 --ddl-sql")
+
+
 def resolve_java_type(sql_type: str, mapping: Dict[str, str]) -> str:
     normalized = normalize_sql_type(sql_type)
     base = strip_sql_type(sql_type)
@@ -990,6 +1194,21 @@ def run_extract(args):
     print(f"tables: {len(metadata.get('tables', []))}")
 
 
+def run_ddl2metadata(args):
+    ddl_text = read_ddl_input(args)
+    metadata = metadata_from_ddl(
+        ddl_text=ddl_text,
+        db_type=(args.db_type or "mysql"),
+        database=(args.database or "ddl"),
+        schema=args.schema,
+    )
+    if not metadata.get("tables"):
+        raise SkillError("DDL 中未识别到 CREATE TABLE")
+    write_text(args.output, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+    print(f"metadata written: {args.output}")
+    print(f"tables: {len(metadata.get('tables', []))}")
+
+
 def print_progress_bar(current: int, total: int, prefix: str = ""):
     bar_length = 40
     progress = current / total
@@ -1006,6 +1225,14 @@ def run_scaffold(args):
 
     if args.metadata_file:
         metadata = load_json(args.metadata_file)
+        metadata["tables"] = apply_table_regex_filters(metadata.get("tables", []), args.include_tables_regex, args.exclude_tables_regex)
+    elif args.ddl_file or args.ddl_sql:
+        metadata = metadata_from_ddl(
+            ddl_text=read_ddl_input(args),
+            db_type=(args.db_type or "mysql"),
+            database=(args.database or "ddl"),
+            schema=args.schema,
+        )
         metadata["tables"] = apply_table_regex_filters(metadata.get("tables", []), args.include_tables_regex, args.exclude_tables_regex)
     else:
         metadata = extract_metadata(args)
@@ -1089,6 +1316,8 @@ def add_scaffold_args(p):
     p.add_argument("--overwrite", action="store_true", help="允许覆盖已存在文件")
     p.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--ddl-file", help="DDL SQL 文件路径（可替代 --metadata-file 与数据库连接）")
+    p.add_argument("--ddl-sql", help="DDL SQL 文本（可替代 --metadata-file 与数据库连接）")
 
 
 def build_parser():
@@ -1101,6 +1330,14 @@ def build_parser():
     p_extract = sub.add_parser("extract", help="提取数据库元数据")
     add_conn_args(p_extract)
     p_extract.add_argument("--output", required=True)
+
+    p_ddl = sub.add_parser("ddl2metadata", help="根据 DDL 文本生成 metadata.json")
+    p_ddl.add_argument("--ddl-file", help="DDL SQL 文件路径")
+    p_ddl.add_argument("--ddl-sql", help="DDL SQL 文本")
+    p_ddl.add_argument("--db-type", choices=["mysql", "oracle", "postgres", "opengauss", "oceanbase"])
+    p_ddl.add_argument("--database")
+    p_ddl.add_argument("--schema")
+    p_ddl.add_argument("--output", required=True)
 
     p_scaffold = sub.add_parser("scaffold", help="根据元数据生成代码")
     add_conn_args(p_scaffold)
@@ -1238,12 +1475,16 @@ def main():
     try:
         if args.cmd == "extract":
             run_extract(args)
+        elif args.cmd == "ddl2metadata":
+            run_ddl2metadata(args)
         elif args.cmd == "scaffold":
             run_scaffold(args)
         elif args.cmd == "init":
             run_init(args)
-        else:
+        elif args.cmd == "validate":
             run_validate(args)
+        else:
+            raise SkillError(f"不支持的命令: {args.cmd}")
     except SkillError as e:
         print(f"error: {e}")
         raise SystemExit(2)

@@ -17,6 +17,7 @@ metadata:
 - 已有数据库表，需批量生成 YSS 风格持久层。
 - 需要统一生成 `domain model + domain gateway + repository + gateway impl`。
 - 需要多数据源配置、按表名规则批量生成。
+- 无法直连数据库，但已拿到建表 DDL。
 
 不适用：
 
@@ -100,6 +101,29 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
   --output /tmp/metadata.json
 ```
 
+### 4.6 DDL 直生 metadata（无需数据库连接）
+
+```bash
+python3 yss-db2mybatis/scripts/db2mybatis.py ddl2metadata \
+  --ddl-file /path/schema.sql \
+  --db-type mysql \
+  --database quality \
+  --output /tmp/metadata.json
+```
+
+也可直接在 scaffold 使用 DDL：
+
+```bash
+python3 yss-db2mybatis/scripts/db2mybatis.py scaffold \
+  --skill-root /Users/zhudaoming/Documents/yss-project/test-ai-c/.trae/skills/yss-db2mybatis \
+  --ddl-file /path/schema.sql \
+  --base-package com.yss.quality \
+  --domain-segment template \
+  --domain-java-root /path/project-domain/src/main/java \
+  --infra-java-root /path/project-infrastructure/src/main/java \
+  --dry-run
+```
+
 ## 5. 生成前后目录对照
 
 输入：数据库表 `t_quality_template`
@@ -121,6 +145,7 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
 - 主键策略：`--pk-strategy error|first`
 - 项目约定：`--convention-file`
 - 默认生成 Convertor：Gateway 实现统一使用 MapStruct 转换
+- DDL 输入：`--ddl-file` 或 `--ddl-sql`（可替代 metadata 与数据库连接）
 
 ## 7. 项目约定文件
 
