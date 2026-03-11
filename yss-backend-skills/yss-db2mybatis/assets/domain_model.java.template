@@ -12,5 +12,5 @@ public class ${domain_name} implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-${fields_block}
+    ${fields_block}
 }

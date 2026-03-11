@@ -128,7 +128,12 @@ def merge_datasource_args(args):
     dss = cfg.get("datasources") or {}
     if not args.datasource_name:
         raise SkillError("使用 --datasource-config 时必须传 --datasource-name")
+    
+    # 优先从 datasources 键下获取，如果没找到，尝试直接从根对象获取
     ds = dss.get(args.datasource_name)
+    if not ds:
+        ds = cfg.get(args.datasource_name)
+
     if not ds:
         raise SkillError(f"datasource 未找到: {args.datasource_name}")
 
@@ -152,15 +157,19 @@ def mysql_metadata(args, db_type="mysql"):
     except ImportError as e:
         raise SkillError(f"{db_type} 需要安装 pymysql: pip install pymysql") from e
 
-    conn = pymysql.connect(
-        host=args.host,
-        port=int(args.port),
-        user=args.user,
-        password=args.password,
-        database=args.database,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-    )
+    try:
+        conn = pymysql.connect(
+            host=args.host,
+            port=int(args.port),
+            user=args.user,
+            password=args.password,
+            database=args.database,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+    except pymysql.MySQLError as e:
+        raise SkillError(f"数据库连接失败: {str(e)}\n\n排查建议：\n  1. 检查数据库服务是否启动\n  2. 检查主机地址和端口是否正确\n  3. 检查用户名和密码是否正确\n  4. 检查数据库名是否正确\n  5. 检查网络连接是否正常\n") from e
+
     wanted = normalize_tables(args.tables)
     tables = []
     try:
@@ -731,11 +740,11 @@ def build_fields(columns: List[Dict], mapping: Dict[str, str], skip_columns: set
         field_name = to_camel_case(col["name"])
         java_type = resolve_java_type(col["sql_type"], mapping)
         if col.get("comment"):
-            lines.append(f"    /** {col['comment']} */")
+            lines.append(f"/** {col['comment']} */")
         if for_po:
             if col.get("primary"):
                 id_type = "AUTO" if col.get("auto_increment") else "ASSIGN_ID"
-                lines.append(f'    @TableId(value = "{col["name"]}", type = IdType.{id_type})')
+                lines.append(f'@TableId(value = "{col["name"]}", type = IdType.{id_type})')
             else:
                 lines.append(f'    @TableField("{col["name"]}")')
         lines.append(f"    private {java_type} {field_name};")
@@ -765,20 +774,6 @@ def pick_primary_column(table: Dict, columns: List[Dict], pk_strategy: str) -> D
     return {"name": "id", "sql_type": "bigint", "primary": True, "auto_increment": False}
 
 
-def build_convertor_blocks(columns: List[Dict]) -> Dict[str, str]:
-    lines_to_po = []
-    lines_to_domain = []
-    for col in columns:
-        field = to_camel_case(col["name"])
-        cap = upper_first(field)
-        lines_to_po.append(f"        target.set{cap}(source.get{cap}());")
-        lines_to_domain.append(f"        target.set{cap}(source.get{cap}());")
-    return {
-        "to_po_block": "\n".join(lines_to_po),
-        "to_domain_block": "\n".join(lines_to_domain),
-    }
-
-
 def order_by_expr(columns: List[Dict], domain_name: str, pk_field_name: str) -> str:
     names = {x["name"] for x in columns}
     if "created_date" in names:
@@ -799,24 +794,22 @@ def normalize_scaffold_args(args):
     if not args.type_mapping:
         args.type_mapping = default_path(args.skill_root, "references/type-mapping.json")
     if not args.po_template:
-        args.po_template = default_path(args.skill_root, "assets/po.template.java")
+        args.po_template = default_path(args.skill_root, "assets/po.java.template")
     if not args.domain_model_template:
-        args.domain_model_template = default_path(args.skill_root, "assets/domain_model.template.java")
+        args.domain_model_template = default_path(args.skill_root, "assets/domain_model.java.template")
     if not args.repository_template:
-        args.repository_template = default_path(args.skill_root, "assets/repository.template.java")
+        args.repository_template = default_path(args.skill_root, "assets/repository.java.template")
     if not args.domain_gateway_template:
-        args.domain_gateway_template = default_path(args.skill_root, "assets/domain_gateway.template.java")
+        args.domain_gateway_template = default_path(args.skill_root, "assets/domain_gateway.java.template")
     if not args.gateway_impl_template:
-        args.gateway_impl_template = default_path(args.skill_root, "assets/gateway_impl.template.java")
+        args.gateway_impl_template = default_path(args.skill_root, "assets/gateway_impl.java.template")
     if not args.convertor_template:
-        args.convertor_template = default_path(args.skill_root, "assets/convertor.template.java")
+        args.convertor_template = default_path(args.skill_root, "assets/convertor.java.template")
 
     convention = {
         "audit_columns": list(DEFAULT_AUDIT_COLUMNS),
         "logic_delete_fields": list(DEFAULT_LOGIC_DELETE_FIELDS),
-        "base_entity_class": "AuditableEntity",
         "pk_strategy": args.pk_strategy,
-        "generate_convertor": args.generate_convertor,
         "page_method_name": "page",
     }
 
@@ -839,7 +832,7 @@ def build_paths(args, domain_name: str, domain_segment: str) -> Dict[str, Path]:
     if domain_segment:
         domain_sub_path = base_path / "domain" / domain_segment
     else:
-        domain_sub_path = base_path / "domain"
+        domain_sub_path = base_path / "domain" / domain_name.lower()
 
     return {
         "domain_model": domain_root / domain_sub_path / "model" / f"{domain_name}.java",
@@ -859,8 +852,7 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
     conv = args._convention
     skip_columns = set(conv.get("audit_columns") or [])
     logic_delete_fields = conv.get("logic_delete_fields") or []
-    generate_convertor = bool(conv.get("generate_convertor"))
-    base_entity_class = conv.get("base_entity_class") or "AuditableEntity"
+    base_entity_class = conv.get("base_entity_class")
 
     domain_name = infer_domain_name(table["table_name"], args.table_prefix)
     domain_segment = args.domain_segment
@@ -869,8 +861,8 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         model_pkg = f"{args.base_package}.domain.{domain_segment}.model"
         gateway_pkg = f"{args.base_package}.domain.{domain_segment}.gateway"
     else:
-        model_pkg = f"{args.base_package}.domain.model"
-        gateway_pkg = f"{args.base_package}.domain.gateway"
+        model_pkg = f"{args.base_package}.domain.{domain_name.lower()}.model"
+        gateway_pkg = f"{args.base_package}.domain.{domain_name.lower()}.gateway"
 
     method_add = f"add{domain_name}"
     method_update = f"update{domain_name}"
@@ -884,9 +876,10 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
     pk_col = pick_primary_column(table, domain_columns, conv.get("pk_strategy", "error"))
     pk_field_name = to_camel_case(pk_col["name"])
     pk_java_type = resolve_java_type(pk_col["sql_type"], mapping)
-    pk_getter = "get" + upper_first(pk_field_name)
+    pk_getter = "get" + upper_first(to_camel_case(pk_col["name"]))
 
     paths = build_paths(args, domain_name, domain_segment)
+
 
     table_comment = (table.get("table_comment") or table["table_name"]).replace("*/", "")
     po_content = fill_template(template_text(args.po_template), {
@@ -896,7 +889,6 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         "domain_name": domain_name,
         "fields_block": po_fields_block,
         "extra_imports": java_imports_for_columns(po_columns, mapping),
-        "base_entity_class": base_entity_class,
     })
     domain_model_content = fill_template(template_text(args.domain_model_template), {
         "base_package": args.base_package,
@@ -933,48 +925,12 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
             logic_delete_condition = f"        wrapper.eq({domain_name}PO::get{upper_first(to_camel_case(logic_field))}, 0);"
             break
 
-    if generate_convertor:
-        convertor_import = f"import {args.base_package}.repository.convertor.{domain_name}Convertor;"
-        mapping_block = "\n".join([
-            f"    private {domain_name}PO toPO({domain_name} source) {{",
-            f"        return {domain_name}Convertor.INSTANCE.toPO(source);",
-            "    }",
-            "",
-            f"    private {domain_name} toDomain({domain_name}PO source) {{",
-            f"        return {domain_name}Convertor.INSTANCE.toDomain(source);",
-            "    }",
-        ])
-        to_po_expr = f"{domain_name}Convertor.INSTANCE.toPO(entity)"
-        convertor_content = fill_template(template_text(args.convertor_template), {
-            "base_package": args.base_package,
-            "model_pkg": model_pkg,
-            "domain_segment": domain_segment,
-            "domain_name": domain_name,
-        })
-    else:
-        convertor_import = ""
-        blocks = build_convertor_blocks(domain_columns)
-        mapping_block = "\n".join([
-            f"    private {domain_name}PO toPO({domain_name} source) {{",
-            "        if (source == null) {",
-            "            return null;",
-            "        }",
-            f"        {domain_name}PO target = new {domain_name}PO();",
-            blocks["to_po_block"],
-            "        return target;",
-            "    }",
-            "",
-            f"    private {domain_name} toDomain({domain_name}PO source) {{",
-            "        if (source == null) {",
-            "            return null;",
-            "        }",
-            f"        {domain_name} target = new {domain_name}();",
-            blocks["to_domain_block"],
-            "        return target;",
-            "    }",
-        ])
-        to_po_expr = "toPO(entity)"
-        convertor_content = ""
+    convertor_content = fill_template(template_text(args.convertor_template), {
+        "base_package": args.base_package,
+        "model_pkg": model_pkg,
+        "domain_segment": domain_segment,
+        "domain_name": domain_name,
+    })
 
     gw_impl_content = fill_template(template_text(args.gateway_impl_template), {
         "base_package": args.base_package,
@@ -988,9 +944,6 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         "pk_getter": pk_getter,
         "order_by_expr": order_by_expr(domain_columns, domain_name, pk_field_name),
         "logic_delete_condition": logic_delete_condition,
-        "convertor_import": convertor_import,
-        "mapping_block": mapping_block,
-        "to_po_expr": to_po_expr,
         "method_add": method_add,
         "method_update": method_update,
         "method_delete": method_delete,
@@ -1004,9 +957,8 @@ def generate_table(table: Dict, args, mapping: Dict[str, str]) -> List[Path]:
         (paths["po"], po_content),
         (paths["repo"], repo_content),
         (paths["gateway_impl"], gw_impl_content),
+        (paths["convertor"], convertor_content),
     ]
-    if generate_convertor:
-        plan.append((paths["convertor"], convertor_content))
 
     generated = []
     for target, content in plan:
@@ -1021,7 +973,7 @@ def validate_templates(args):
         args.domain_model_template: ["${domain_name}"],
         args.repository_template: ["${domain_name}"],
         args.domain_gateway_template: ["${domain_name}", "${pk_java_type}"],
-        args.gateway_impl_template: ["${domain_name}", "${repository_field_name}", "${mapping_block}"],
+        args.gateway_impl_template: ["${domain_name}", "${repository_field_name}"],
         args.convertor_template: ["${domain_name}"],
     }
     for file_path, tokens in expected.items():
@@ -1133,7 +1085,6 @@ def add_scaffold_args(p):
     p.add_argument("--type-mapping")
     p.add_argument("--convention-file")
     p.add_argument("--pk-strategy", choices=["error", "first"], default="error")
-    p.add_argument("--generate-convertor", action="store_true", help="生成 mapstruct convertor")
     p.add_argument("--keep-audit-columns", action="store_true")
     p.add_argument("--overwrite", action="store_true", help="允许覆盖已存在文件")
     p.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")

@@ -8,7 +8,7 @@ import {{base_package}}.client.dto.cmd.UserAddCmd;
 import {{base_package}}.client.dto.cmd.UserUpdateCmd;
 import {{base_package}}.client.dto.query.UserPageQuery;
 import {{base_package}}.client.vo.UserVO;
-import {{base_package}}.domain.gateway.UserGateway;
+import {{base_package}}.domain.user.gateway.UserGateway;
 import {{base_package}}.repository.UserRepository;
 import {{base_package}}.repository.convertor.UserPOConvertor;
 import {{base_package}}.repository.entity.UserPO;

@@ -1,4 +1,4 @@
-package {{base_package}}.domain.gateway;
+package {{base_package}}.domain.user.gateway;
 
 import com.yss.cloud.dto.result.PageResult;
 import {{base_package}}.client.dto.cmd.UserAddCmd;

@@ -171,8 +171,8 @@ class ScaffoldGenerator:
             (self.template_root / "domain" / "UserUpdateCmd.java.template", domain_root / "client" / "dto" / "cmd" / "UserUpdateCmd.java"),
             (self.template_root / "domain" / "UserPageQuery.java.template", domain_root / "client" / "dto" / "query" / "UserPageQuery.java"),
             (self.template_root / "domain" / "UserVO.java.template", domain_root / "client" / "vo" / "UserVO.java"),
-            (self.template_root / "domain" / "UserGateway.java.template", domain_root / "domain" / "gateway" / "UserGateway.java"),
-            (self.template_root / "domain" / "User.java.template", domain_root / "domain" / "model" / "User.java"),
+            (self.template_root / "domain" / "UserGateway.java.template", domain_root / "domain" / "user" / "gateway" / "UserGateway.java"),
+            (self.template_root / "domain" / "User.java.template", domain_root / "domain" / "user" / "model" / "User.java"),
             (self.template_root / "application" / "UserService.java.template", application_root / "core" / "service" / "UserService.java"),
             (self.template_root / "application" / "UserServiceImpl.java.template", application_root / "core" / "service" / "impl" / "UserServiceImpl.java"),
             (self.template_root / "application" / "UserConvertor.java.template", application_root / "core" / "service" / "convertor" / "UserConvertor.java"),
@@ -375,7 +375,7 @@ CREATE TABLE leaf_alloc (
     def _resolve_driver_class(self, database: str) -> str:
         drivers = {
             "mysql": "com.mysql.cj.jdbc.Driver",
-            "postgresql": "org.postgresql.Driver",
+            "postgres": "org.postgresql.Driver",
             "oracle": "oracle.jdbc.OracleDriver",
             "sqlite": "org.sqlite.JDBC"
         }
@@ -386,7 +386,7 @@ CREATE TABLE leaf_alloc (
             return f"jdbc:sqlite:{db_name}.db"
         elif database == "mysql":
             return f"jdbc:mysql://localhost:3306/{db_name}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
-        elif database == "postgresql":
+        elif database == "postgres":
             return f"jdbc:postgresql://localhost:5432/{db_name}"
         return ""
 
@@ -399,10 +399,18 @@ CREATE TABLE leaf_alloc (
         </dependency>"""
         elif database == "mysql":
             return """<dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
-            <scope>runtime</scope>
+    <groupId>com.mysql</groupId>
+    <artifactId>mysql-connector-j</artifactId>
+    <version>8.4.0</version>
+    <scope>compile</scope>
+</dependency>"""
+        elif database == "postgres":
+            return """<dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.3</version>
         </dependency>"""
+        
         return ""
 
 
@@ -427,7 +435,7 @@ def main():
     parser.add_argument('--with-example', type=bool, default=True,
                        help='是否包含示例代码 (默认: True)')
     parser.add_argument('--database', default='sqlite',
-                       choices=['mysql', 'postgresql', 'oracle', 'sqlite'],
+                       choices=['mysql', 'postgres', 'oracle', 'sqlite'],
                        help='数据库类型 (默认: sqlite)')
     
     args = parser.parse_args()

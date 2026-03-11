@@ -9,8 +9,6 @@
     "deleted",
     "is_deleted"
   ],
-  "base_entity_class": "AuditableEntity",
   "pk_strategy": "error",
-  "generate_convertor": false,
   "page_method_name": "page"
 }

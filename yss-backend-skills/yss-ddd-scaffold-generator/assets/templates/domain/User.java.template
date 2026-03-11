@@ -1,4 +1,4 @@
-package {{base_package}}.domain.model;
+package {{base_package}}.domain.user.model;
 
 import lombok.Data;
 

@@ -33,7 +33,7 @@ com.yss.{module}.repository
 ### 3.1 持久化对象 (PO)
 
 - **命名**: `DomainName` + `PO` (e.g., `QualityTemplatePO`)。
-- **继承**: 必须继承 `AuditableEntity` 以自动处理审计字段 (`created_by`, `created_date` 等)。
+- **继承**: 推荐继承 `AuditableEntity` 以自动处理审计字段 (`created_by`, `created_date` 等)，但非强制要求。
 - **注解**:
   - `@TableName("t_table_name")`: 指定数据库表名。
   - `@TableId(value = "id", type = IdType.ASSIGN_ID)`: 指定主键策略 (雪花算法)。
@@ -188,7 +188,7 @@ public interface QualityTemplateConvertor {
 
 ## 5. 注意事项 (Notes)
 
-1.  **AuditableEntity**: 确保所有业务 PO 都继承此基类，以便自动维护审计信息。
+1.  **AuditableEntity**: 推荐业务 PO 继承此基类，以便自动维护审计信息。
 2.  **Lombok 使用**: 使用 `@RequiredArgsConstructor` 进行构造器注入是推荐的最佳实践。
 3.  **Wrapper 使用**: 优先使用 `Wrappers.lambdaQuery()` 而不是字符串列名，以提高重构安全性。
 4.  **分页工具**: 使用 `PageUtil` 统一处理分页参数，避免手动计算 offset。

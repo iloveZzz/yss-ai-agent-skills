@@ -13,6 +13,7 @@ metadata:
 ## 1. 功能概述 (Features)
 
 ### 1.1 核心功能
+
 - **项目结构生成**: 自动创建 Domain、Application、Infrastructure、Adapter、Bootstrap 五层模块
 - **代码模板生成**: 提供完整的示例代码（User CRUD）
 - **配置文件生成**: 自动生成 Maven POM、application.yml、logback 配置
@@ -21,6 +22,7 @@ metadata:
 - **文档生成**: 自动生成项目 README 和 API 文档
 
 ### 1.2 技术栈
+
 - **JDK**: 8
 - **Spring Boot**: 2.7.18
 - **MyBatis Plus**: 3.5.x
@@ -44,13 +46,13 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 
 ### 2.2 参数说明
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `--project-name` | 项目名称（kebab-case） | 是 | - |
-| `--base-package` | 基础包名 | 是 | - |
-| `--output-dir` | 输出目录 | 否 | `./output` |
-| `--with-example` | 是否包含示例代码 | 否 | `true` |
-| `--database` | 数据库类型 | 否 | `sqlite` (若需MySQL请显式指定 `mysql`) |
+| 参数             | 说明                   | 必填 | 默认值                                 |
+| ---------------- | ---------------------- | ---- | -------------------------------------- |
+| `--project-name` | 项目名称（kebab-case） | 是   | -                                      |
+| `--base-package` | 基础包名               | 是   | -                                      |
+| `--output-dir`   | 输出目录               | 否   | `./output`                             |
+| `--with-example` | 是否包含示例代码       | 否   | `true`                                 |
+| `--database`     | 数据库类型             | 否   | `sqlite` (若需MySQL请显式指定 `mysql`) |
 
 ### 2.3 生成的项目结构
 
@@ -66,9 +68,10 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 │       │   └── query/                        # 查询对象
 │       ├── client/vo/                        # 值对象
 │       └── domain/
-│           ├── gateway/                      # 网关接口
-│           ├── model/                        # 领域模型
-│           └── service/                      # 领域服务
+│           └── {domain-name}/                # 具体领域 (e.g., user, metadata)
+│               ├── gateway/                  # 网关接口
+│               ├── model/                    # 领域模型
+│               └── service/                  # 领域服务
 ├── {project-name}-application/                # 应用层
 │   ├── pom.xml
 │   └── src/main/java/{base-package}/core/
@@ -101,20 +104,23 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 ## 3. 常见问题 (FAQ)
 
 ### 3.1 默认数据库依赖
+
 默认生成的项目使用 SQLite。如果需要 MySQL，请在生成时指定 `--database mysql`。
 如果已经生成了 SQLite 项目想要切换到 MySQL：
+
 1. 修改 `infrastructure/pom.xml`，移除 `sqlite-jdbc`，添加 `mysql-connector-j`。
 2. 修改 `bootstrap/src/main/resources/application.yml` 中的数据源配置。
 
 ### 3.2 启动类注解
-生成的 `Application.java` 可能包含 `@EnableYssCloudRedisCache` 等注解。如果项目未配置 Redis，请注释掉该注解以免启动失败。
 
+生成的 `Application.java` 可能包含 `@EnableYssCloudRedisCache` 等注解。如果项目未配置 Redis，请注释掉该注解以免启动失败。
 
 ## 3. 示例代码 (Examples)
 
 生成器会自动创建一个完整的 User 实体示例，包括：
 
 ### 3.1 Domain 层示例
+
 - `UserAddCmd`: 用户新增命令
 - `UserUpdateCmd`: 用户更新命令
 - `UserPageQuery`: 用户分页查询
@@ -122,17 +128,20 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 - `UserGateway`: 用户网关接口
 
 ### 3.2 Application 层示例
+
 - `UserService`: 用户应用服务接口
 - `UserServiceImpl`: 用户应用服务实现
 - `UserConvertor`: 用户对象转换器
 
 ### 3.3 Infrastructure 层示例
+
 - `UserPO`: 用户持久化对象
 - `UserRepository`: 用户仓储接口
 - `UserGatewayImpl`: 用户网关实现
 - `UserConvertor`: PO/VO 转换器
 
 ### 3.4 Adapter 层示例
+
 - `UserController`: 用户 REST 控制器
 
 ## 4. 配置说明 (Configuration)
@@ -195,12 +204,14 @@ java -jar {project-name}-bootstrap/target/{project-name}-bootstrap-1.0.0-SNAPSHO
 生成的代码遵循以下规范：
 
 ### 6.1 命名规范
+
 - **PO**: 持久化对象，对应数据库表
 - **VO**: 值对象，用于数据展示
 - **CMD**: 命令对象，用于数据修改
 - **Query**: 查询对象，用于查询条件
 
 ### 6.2 分层规范
+
 - Domain 层不依赖任何其他层
 - Application 层依赖 Domain 层
 - Infrastructure 层依赖 Domain 层
@@ -208,6 +219,7 @@ java -jar {project-name}-bootstrap/target/{project-name}-bootstrap-1.0.0-SNAPSHO
 - Bootstrap 层依赖所有层
 
 ### 6.3 调用链路
+
 ```
 Controller -> Service -> Gateway -> Repository -> Database
      ↓         ↓         ↓          ↓
@@ -227,6 +239,7 @@ Controller -> Service -> Gateway -> Repository -> Database
 ### 7.2 添加新适配器
 
 在 `{project-name}-adapter` 下创建新模块：
+
 - `{project-name}-job`: 任务调度适配器
 - `{project-name}-mq`: 消息队列适配器
 - `{project-name}-rpc`: RPC 适配器
@@ -256,6 +269,7 @@ Controller -> Service -> Gateway -> Repository -> Database
 ## 10. 更新日志 (Changelog)
 
 ### v1.0 (2024-01-15)
+
 - 初始版本发布
 - 支持基础四层架构生成
 - 包含完整的 User CRUD 示例

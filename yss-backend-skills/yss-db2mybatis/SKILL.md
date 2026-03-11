@@ -29,7 +29,7 @@ metadata:
 - `references/type-mapping.json`：SQL -> Java 类型映射
 - `references/datasource-config.example.json`：多数据源配置示例
 - `references/project-convention.example.json`：项目约定配置示例
-- `assets/*.template.java`：代码模板
+- `assets/*.java.template`：代码模板
 
 ## 3. 依赖
 
@@ -111,7 +111,7 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
 - `repository/entity/QualityTemplatePO.java`
 - `repository/QualityTemplateRepository.java`
 - `repository/gateway/impl/QualityTemplateGatewayImpl.java`
-- 可选：`repository/convertor/QualityTemplateConvertor.java`
+- `repository/convertor/QualityTemplateConvertor.java`
 
 ## 6. 常用参数
 
@@ -120,7 +120,7 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
 - 可观测性：`--verbose`
 - 主键策略：`--pk-strategy error|first`
 - 项目约定：`--convention-file`
-- 可选 Convertor：`--generate-convertor`
+- 默认生成 Convertor：Gateway 实现统一使用 MapStruct 转换
 
 ## 7. 项目约定文件
 
@@ -132,7 +132,7 @@ python3 yss-db2mybatis/scripts/db2mybatis.py extract \
 - `logic_delete_fields`：分页时自动附加 `wrapper.eq(field, 0)`
 - `base_entity_class`：PO 继承父类
 - `pk_strategy`：联合主键处理策略
-- `generate_convertor`：是否生成 MapStruct Convertor
+- 说明：Convertor 始终生成，不再通过项目约定开关控制
 
 ## 8. 校验与执行建议
 
@@ -184,7 +184,6 @@ python3 yss-db2mybatis/scripts/db2mybatis.py validate \
 - `metadata 中没有表`：检查 `--tables`、include/exclude regex、schema 权限。
 - `PageQuery` 引用错误：默认使用 `com.yss.cloud.dto.page.PageQuery`，如需修改请调整 `gateway_impl.template.java`。
 - `Serializable` 泛型约束：生成的 Domain Model 已默认实现 `Serializable`。
-
 
 ## 10. Oracle 特殊说明
 

@@ -27,9 +27,10 @@ com.yss.{module}
 │   │   └── query           # Query: 读操作参数 (e.g., QualityRulePage)
 │   └── vo                  # Value Object: 返回结果 (e.g., QualityBusinessRuleVO)
 └── domain                  # 领域核心实现
-    ├── gateway             # 网关接口定义 (e.g., QualityTemplateGateway)
-    ├── entity              # 领域实体/枚举 (e.g., QualityRuleType)
-    └── service             # 领域服务 (e.g., QualityTemplateService)
+    └── {domain_name}       # 具体的领域模块 (e.g., user, metadata)
+        ├── gateway         # 网关接口定义 (e.g., UserGateway)
+        ├── model           # 领域实体/枚举 (e.g., User, UserType)
+        └── service         # 领域服务 (e.g., UserService)
 ```
 
 ## 3. 开发规范 (Development Guidelines)

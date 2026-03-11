@@ -1,0 +1,12 @@
+{
+  "metadata_mysql": {
+    "db_type": "mysql",
+    "host": "192.168.164.3",
+    "port": 3306,
+    "user": "datamiddle_dev",
+    "password": "datamiddle_dev",
+    "database": "yss_metadata",
+    "schema": null,
+    "service_name": null
+  }
+}
