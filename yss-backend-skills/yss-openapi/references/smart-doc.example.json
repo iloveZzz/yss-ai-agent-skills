@@ -1,0 +1,35 @@
+{
+  "outPath": "target/smart-doc",
+  "isStrict": false,
+  "allInOne": true,
+  "allInOneDocFileName": "api-doc",
+  "framework": "spring",
+  "pathPrefix": "/api",
+  "revisionLogs": [
+    {
+      "version": "1.0.0",
+      "status": "init",
+      "author": "system",
+      "remarks": "init"
+    }
+  ],
+  "sourceCodePaths": [
+    {
+      "path": "../yss-demo-web/src/main/java"
+    }
+  ],
+  "packageFilters": "com.yss..*.rest",
+  "responseBodyAdvice": {
+    "className": "com.yss.cloud.dto.result.SingleResult"
+  },
+  "requestBodyAdvice": {
+    "className": "com.yss.cloud.dto.result.SingleResult"
+  },
+  "errorCodeDictionaries": [],
+  "customResponseFields": [],
+  "rpcConsumerConfig": "",
+  "skipTransientField": true,
+  "showJavaType": true,
+  "sortByTitle": true,
+  "inlineEnum": true
+}
