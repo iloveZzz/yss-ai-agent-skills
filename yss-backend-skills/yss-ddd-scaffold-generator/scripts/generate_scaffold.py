@@ -368,6 +368,8 @@ CREATE TABLE leaf_alloc (
 
     def _resolve_group_id(self, base_package: str) -> str:
         parts = base_package.split(".")
+        if len(parts) >= 3:
+            return ".".join(parts[:3])
         if len(parts) >= 2:
             return ".".join(parts[:2])
         return base_package
@@ -421,15 +423,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例:
-  python generate_scaffold.py --project-name my-service --base-package com.yss.myservice
-  python generate_scaffold.py --project-name user-service --base-package com.yss.user --output-dir ./output
+  python generate_scaffold.py --project-name my-service --base-package com.yss.datamiddle.myservice
+  python generate_scaffold.py --project-name user-service --base-package com.yss.datamiddle.user --output-dir ./output
         '''
     )
     
     parser.add_argument('--project-name', required=True, 
                        help='项目名称 (kebab-case, 例如: user-service)')
     parser.add_argument('--base-package', required=True,
-                       help='基础包名 (例如: com.yss.user)')
+                       help='基础包名 (例如: com.yss.datamiddle.user)')
     parser.add_argument('--output-dir', default='./output',
                        help='输出目录 (默认: ./output)')
     parser.add_argument('--with-example', type=bool, default=True,
@@ -445,9 +447,9 @@ def main():
         print("❌ 错误: 项目名称必须是 kebab-case 格式 (例如: user-service)")
         sys.exit(1)
     
-    # 验证包名格式
-    if not re.match(r'^[a-z][a-z0-9.]*$', args.base_package):
-        print("❌ 错误: 包名格式不正确 (例如: com.yss.user)")
+    # 验证包名格式，必须符合 YSS 数据中台规范
+    if not re.match(r'^com\.yss\.datamiddle\.[a-z][a-z0-9.]*$', args.base_package):
+        print("❌ 错误: 包名必须符合规范 com.yss.datamiddle.xxx (例如: com.yss.datamiddle.user)")
         sys.exit(1)
     
     # 创建生成器并执行

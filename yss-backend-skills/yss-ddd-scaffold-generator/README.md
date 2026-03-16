@@ -69,7 +69,7 @@ cd yss-datamiddle-scaffold
 
 python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
   --project-name my-service \
-  --base-package com.yss.myservice \
+  --base-package com.yss.datamiddle.myservice \
   --output-dir ./output
 ```
 
@@ -172,8 +172,8 @@ cd output/my-service
 | 变量 | 说明 | 示例 |
 |------|------|------|
 | `{{project_name}}` | 项目名称 | `user-service` |
-| `{{base_package}}` | 基础包名 | `com.yss.user` |
-| `{{group_id}}` | Maven GroupId | `com.yss` |
+| `{{base_package}}` | 基础包名 | `com.yss.datamiddle.user` |
+| `{{group_id}}` | Maven GroupId | `com.yss.datamiddle` |
 | `{{author}}` | 作者 | `YSS Team` |
 | `{{date}}` | 日期 | `2024-01-15` |
 | `{{database}}` | 数据库类型 | `mysql` |

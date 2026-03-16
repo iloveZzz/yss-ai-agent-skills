@@ -11,7 +11,7 @@ cd yss-datamiddle-scaffold
 # 生成项目
 python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
   --project-name user-service \
-  --base-package com.yss.user \
+  --base-package com.yss.datamiddle.user \
   --output-dir ./output
 ```
 

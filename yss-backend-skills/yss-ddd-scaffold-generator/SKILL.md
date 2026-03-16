@@ -40,7 +40,7 @@ cd yss-datamiddle-scaffold
 # 运行生成器
 python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
   --project-name my-service \
-  --base-package com.yss.myservice \
+  --base-package com.yss.datamiddle.myservice \
   --output-dir ./output
 ```
 
@@ -49,7 +49,7 @@ python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
 | 参数             | 说明                   | 必填 | 默认值                                 |
 | ---------------- | ---------------------- | ---- | -------------------------------------- |
 | `--project-name` | 项目名称（kebab-case） | 是   | -                                      |
-| `--base-package` | 基础包名               | 是   | -                                      |
+| `--base-package` | 基础包名（必须 `com.yss.datamiddle.xxx`） | 是   | -                                      |
 | `--output-dir`   | 输出目录               | 否   | `./output`                             |
 | `--with-example` | 是否包含示例代码       | 否   | `true`                                 |
 | `--database`     | 数据库类型             | 否   | `sqlite` (若需MySQL请显式指定 `mysql`) |

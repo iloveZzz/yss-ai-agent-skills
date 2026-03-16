@@ -6,7 +6,7 @@
 # 1. 生成项目
 python .trae/skills/yss-ddd-scaffold-generator/scripts/generate_scaffold.py \
   --project-name my-service \
-  --base-package com.yss.myservice
+  --base-package com.yss.datamiddle.myservice
 
 # 2. 编译项目
 cd output/my-service && ./mvnw clean compile
@@ -48,7 +48,7 @@ my-service/
 | 类型 | 格式 | 示例 |
 |------|------|------|
 | 项目名 | kebab-case | user-service |
-| 包名 | lowercase.dot | com.yss.user |
+| 包名 | lowercase.dot | com.yss.datamiddle.user |
 | 类名 | PascalCase | UserService |
 | 方法名 | camelCase | getUserById |
 | 常量 | UPPER_SNAKE_CASE | MAX_SIZE |

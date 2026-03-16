@@ -161,7 +161,7 @@ yss-ddd-scaffold-generator/
 ```bash
 python scripts/generate_scaffold.py \
   --project-name order-service \
-  --base-package com.yss.order
+  --base-package com.yss.datamiddle.order
 ```
 
 ### 场景2: 学习 DDD 架构

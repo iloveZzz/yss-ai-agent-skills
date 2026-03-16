@@ -93,8 +93,8 @@ def create_project_structure(project_root, base_package):
 | 模板变量 | 来源 | 示例 |
 |---------|------|------|
 | `{{project_name}}` | --project-name | user-service |
-| `{{base_package}}` | --base-package | com.yss.user |
-| `{{group_id}}` | 从 base_package 提取 | com.yss |
+| `{{base_package}}` | --base-package | com.yss.datamiddle.user |
+| `{{group_id}}` | 从 base_package 提取 | com.yss.datamiddle |
 | `{{author}}` | 系统用户名或配置 | YSS Team |
 | `{{date}}` | 当前日期 | 2024-01-15 |
 
